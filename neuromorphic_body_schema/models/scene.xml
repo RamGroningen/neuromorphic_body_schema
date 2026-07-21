@@ -71,6 +71,16 @@
       condim="6"/>
     <!-- ===== END FLOOR ===== -->
 
+    <!-- ===== Wall ===== -->
+    <geom name="wall"
+      type="box"
+      pos="-1.5 0 0.8"
+      size="0.02 1.5 0.8"
+      rgba="0.6 0.6 0.65 1"
+      contype="1" conaffinity="63"
+      condim="6"/>
+    <!-- ===== END Wall ===== -->
+
     <!-- ===== LIGHTS ===== -->
 
     <!-- Key light: warm, slightly off-axis, casts shadows -->

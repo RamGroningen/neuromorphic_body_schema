@@ -221,10 +221,10 @@ def init_POV(viewer):
 
     # Use deterministic camera defaults so startup POV does not depend on
     # viewer-internal initial values across MuJoCo/Python versions.
-    viewer.cam.azimuth = -4.5
-    viewer.cam.distance = 2
-    viewer.cam.elevation = -16
-    viewer.cam.lookat = np.array([0, -0.25, 1])
+    viewer.cam.azimuth = 90
+    viewer.cam.distance = 3
+    viewer.cam.elevation = -12
+    viewer.cam.lookat    = np.array([-0.75, 0, 0.8])
 
     # Example: Only show groups 0 and 2, hide others
     viewer.opt.sitegroup[:] = 0  # Hide all groups
