@@ -38,7 +38,7 @@ _PACKAGE_DIR = Path(__file__).parent.parent
 # MODEL_PATH = str(_PACKAGE_DIR / "models" /
 #                  "icub_v2_full_body_improved_contact_sensors.xml")
 MODEL_PATH = str(_PACKAGE_DIR / "models" /
-                 "scene.xml")
+                 "finger_plane_scene.xml")
 # Prefer the current folder name in this repository (skinGUI), but keep a
 # fallback for earlier naming variants.
 _triangle_ini_dir = _PACKAGE_DIR / "skinGUI"
