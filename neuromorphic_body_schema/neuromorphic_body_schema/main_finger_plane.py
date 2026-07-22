@@ -730,6 +730,30 @@ class SimulationControlPanel:
         self._make_ball_button(ball_frame, "Back", "back", 5, 1)
 
         tk.Label(
+            ball_frame,
+            text="Patterns",
+            font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=6, column=0, columnspan=3, pady=(8, 2), sticky="w")
+        tk.Button(
+            ball_frame,
+            text="Forward <-> Back",
+            command=lambda: self.ball_controller.start_pattern("y"),
+            width=16,
+        ).grid(row=7, column=0, columnspan=2, padx=4, pady=2, sticky="ew")
+        tk.Button(
+            ball_frame,
+            text="Left <-> Right",
+            command=lambda: self.ball_controller.start_pattern("x"),
+            width=16,
+        ).grid(row=7, column=2, padx=4, pady=2, sticky="ew")
+        tk.Button(
+            ball_frame,
+            text="Stop Pattern",
+            command=self.ball_controller.stop_pattern,
+            width=16,
+        ).grid(row=8, column=0, columnspan=3, padx=4, pady=2, sticky="ew")
+
+        tk.Label(
             finger_frame,
             text="Finger: I/J/K/L keys. Slider sets the force magnitude used for those moves.",
             justify="left",
