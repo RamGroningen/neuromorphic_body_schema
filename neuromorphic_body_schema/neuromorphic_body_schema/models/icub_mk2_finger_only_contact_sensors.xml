@@ -187,13 +187,10 @@
         <touch name="RIGHT_ARM__HAND__0__11" site="r_hand_index_3_taxel_11" />
     </sensor>
 
-    <equality>
-        <weld body1="icub_r_hand_welding" body2="icub_r_hand"/>
-    </equality>
-    
     <actuator>
-        <position name="r_index_proximal"       kp="20.0"       joint="r_hand_index_1_joint"            ctrlrange="0 1.5708"/>
-        <position name="r_index_distal"         kp="10.0"       tendon="r_index_distal_tendon"          ctrlrange="0 2.965555556"/>
+        <!-- Motor actuators: ctrl is joint torque in N·m -->
+        <motor name="r_index_proximal" joint="r_hand_index_1_joint"   ctrlrange="-2 2" gear="1"/>
+        <motor name="r_index_distal"   tendon="r_index_distal_tendon" ctrlrange="-2 2" gear="1"/>
     </actuator>
     
 </mujoco>
