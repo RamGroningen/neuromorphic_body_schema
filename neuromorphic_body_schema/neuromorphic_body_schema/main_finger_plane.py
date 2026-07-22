@@ -43,6 +43,7 @@ from collections import defaultdict
 
 import mujoco
 import numpy as np
+import tkinter as tk
 from neuromorphic_body_schema.helpers.ed_cam import ICubEyes
 from neuromorphic_body_schema.helpers.ed_prop import ICubProprioception
 from neuromorphic_body_schema.helpers.ed_skin import ICubSkin
@@ -73,6 +74,7 @@ MjModel = getattr(mujoco, "MjModel")
 MjData = getattr(mujoco, "MjData")
 mj_name2id = getattr(mujoco, "mj_name2id")
 mjtObj = getattr(mujoco, "mjtObj")
+mj_forward = getattr(mujoco, "mj_forward")
 mj_step = getattr(mujoco, "mj_step")
 
 CAMERA_MODE = "frame_based"  # "event_driven" or "frame_based"
@@ -93,6 +95,161 @@ VISUALIZE_ED_SKIN_FEED = False
 
 PROPRIOCEPTION_MODE = "event_driven"  # "event_driven" or "frame_based"
 VISUALIZE_PROPRIOCEPTION_FEED = False
+
+BALL_BODY_NAME = "ground_sphere_body"
+BALL_SPEED = 0.05  # meters per second while a control input is held
+
+
+class BallMotionController:
+    """Tracks currently held movement directions for the floor ball."""
+
+    _ACTION_VECTORS = {
+        "left": np.array([-1.0, 0.0]),
+        "right": np.array([1.0, 0.0]),
+        "forward": np.array([0.0, 1.0]),
+        "back": np.array([0.0, -1.0]),
+    }
+
+    _KEY_TO_ACTION = {
+        "a": "left",
+        "left": "left",
+        "d": "right",
+        "right": "right",
+        "w": "forward",
+        "up": "forward",
+        "s": "back",
+        "down": "back",
+    }
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._pressed_actions: set[str] = set()
+
+    def press(self, action: str) -> None:
+        with self._lock:
+            self._pressed_actions.add(action)
+
+    def release(self, action: str) -> None:
+        with self._lock:
+            self._pressed_actions.discard(action)
+
+    def stop(self) -> None:
+        with self._lock:
+            self._pressed_actions.clear()
+
+    def vector(self) -> np.ndarray:
+        with self._lock:
+            if not self._pressed_actions:
+                return np.zeros(2, dtype=float)
+
+            direction = np.zeros(2, dtype=float)
+            for action in self._pressed_actions:
+                direction += self._ACTION_VECTORS[action]
+
+            norm = np.linalg.norm(direction)
+            if norm == 0.0:
+                return direction
+            return direction / norm
+
+    @classmethod
+    def key_to_action(cls, key: str) -> str | None:
+        return cls._KEY_TO_ACTION.get(key.lower())
+
+
+class BallControlPanel:
+    """Small Tk panel for pressing/releasing ball movement commands."""
+
+    def __init__(self, controller: BallMotionController) -> None:
+        self.controller = controller
+        self._open = True
+        self._root = tk.Tk()
+        self._root.title("Ball Control")
+        self._root.resizable(False, False)
+        self._root.protocol("WM_DELETE_WINDOW", self.close)
+        self._root.attributes("-topmost", True)
+
+        container = tk.Frame(self._root, padx=12, pady=12)
+        container.grid(row=0, column=0)
+
+        tk.Label(
+            container,
+            text="Hold buttons or W/A/S/D, or arrow keys. Release stops the ball.",
+            justify="left",
+            wraplength=280,
+        ).grid(row=0, column=0, columnspan=3, pady=(0, 10), sticky="w")
+
+        self._make_button(container, "Forward", "forward", 1, 1)
+        self._make_button(container, "Left", "left", 2, 0)
+        self._make_button(container, "Stop", None, 2, 1, stop_button=True)
+        self._make_button(container, "Right", "right", 2, 2)
+        self._make_button(container, "Back", "back", 3, 1)
+
+        tk.Label(
+            container,
+            text="Tip: keep this window focused for keyboard input.",
+            fg="#555555",
+        ).grid(row=4, column=0, columnspan=3, pady=(10, 0), sticky="w")
+
+        self._root.bind("<KeyPress>", self._on_key_press)
+        self._root.bind("<KeyRelease>", self._on_key_release)
+        self._root.update_idletasks()
+        self._root.focus_force()
+
+    def _make_button(
+        self,
+        parent: tk.Widget,
+        label: str,
+        action: str | None,
+        row: int,
+        column: int,
+        stop_button: bool = False,
+    ) -> None:
+        button = tk.Button(parent, text=label, width=10 if not stop_button else 8)
+        button.grid(row=row, column=column, padx=4, pady=4, sticky="nsew")
+
+        if stop_button:
+            button.configure(command=self.controller.stop)
+            return
+
+        assert action is not None
+        button.bind("<ButtonPress-1>", lambda _event, a=action: self.controller.press(a))
+        button.bind(
+            "<ButtonRelease-1>",
+            lambda _event, a=action: self.controller.release(a),
+        )
+
+    def _on_key_press(self, event: tk.Event) -> None:
+        action = BallMotionController.key_to_action(str(event.keysym))
+        if action is not None:
+            self.controller.press(action)
+
+    def _on_key_release(self, event: tk.Event) -> None:
+        action = BallMotionController.key_to_action(str(event.keysym))
+        if action is not None:
+            self.controller.release(action)
+
+    def pump(self) -> None:
+        if not self._open:
+            return
+
+        try:
+            self._root.update_idletasks()
+            self._root.update()
+        except tk.TclError:
+            self._open = False
+
+    def close(self) -> None:
+        self.controller.stop()
+        if self._open:
+            self._open = False
+            try:
+                self._root.destroy()
+            except tk.TclError:
+                pass
+
+    @property
+    def is_open(self) -> bool:
+        return self._open
 
 
 if __name__ == "__main__":
@@ -151,6 +308,12 @@ if __name__ == "__main__":
 
     dynamic_grouped_sensors = DynamicGroupedSensors(data, grouped_sensors)
 
+    ball_body_id = mj_name2id(model, mjtObj.mjOBJ_BODY, BALL_BODY_NAME)
+    ball_mocap_id = model.body_mocapid[ball_body_id]
+    ball_rest_position = data.mocap_pos[ball_mocap_id].copy()
+    ball_controller = BallMotionController()
+    control_panel = BallControlPanel(ball_controller)
+
     joint_dict_prop = {
         "r_shoulder_roll": {
             "position_max_freq": 1000,  # Hz
@@ -170,33 +333,45 @@ if __name__ == "__main__":
     ### Start the simulation ###
     ############################
 
-    with viewer.launch_passive(model, data) as sim_viewer:
-        init_POV(sim_viewer)
+    try:
+        with viewer.launch_passive(model, data) as sim_viewer:
+            init_POV(sim_viewer)
 
-        sim_time = data.time
+            sim_time = data.time
 
-        skin_object = ICubSkin(
-            sim_time,
-            dynamic_grouped_sensors,
-            skin=SKIN_PART,
-            skin_mode=SKIN_MODE,
-            show_raw_feed=VISUALIZE_SKIN_FEED,
-            show_ed_feed=VISUALIZE_ED_SKIN_FEED,
-            DEBUG=DEBUG
-        )
+            skin_object = ICubSkin(
+                sim_time,
+                dynamic_grouped_sensors,
+                skin=SKIN_PART,
+                skin_mode=SKIN_MODE,
+                show_raw_feed=VISUALIZE_SKIN_FEED,
+                show_ed_feed=VISUALIZE_ED_SKIN_FEED,
+                DEBUG=DEBUG
+            )
 
-        # count = 0
-        while sim_viewer.is_running():
-            mj_step(model, data)  # Step the simulation
-            sim_viewer.sync()
+            # count = 0
+            while sim_viewer.is_running():
+                control_panel.pump()
 
-            skin_events = skin_object.update_skin(
-                data.time * 1e9
-            )  # expects ns
+                direction = ball_controller.vector()
+                if np.any(direction):
+                    ball_position = data.mocap_pos[ball_mocap_id]
+                    ball_position[:2] += direction * BALL_SPEED * model.opt.timestep
+                    ball_position[2] = ball_rest_position[2]
+                    mj_forward(model, data)
 
-            '''current_pos = data.mocap_pos[mocap_id]
-            x_cmd = current_pos[0] + 0.0001
-            y_cmd = current_pos[1] + 0.0001'''
-            #data.mocap_pos[mocap_id] = np.array([x_cmd, y_cmd, z_fixed])
+                mj_step(model, data)  # Step the simulation
+                sim_viewer.sync()
 
-            pass
+                skin_events = skin_object.update_skin(
+                    data.time * 1e9
+                )  # expects ns
+
+                '''current_pos = data.mocap_pos[mocap_id]
+                x_cmd = current_pos[0] + 0.0001
+                y_cmd = current_pos[1] + 0.0001'''
+                #data.mocap_pos[mocap_id] = np.array([x_cmd, y_cmd, z_fixed])
+
+                pass
+    finally:
+        control_panel.close()

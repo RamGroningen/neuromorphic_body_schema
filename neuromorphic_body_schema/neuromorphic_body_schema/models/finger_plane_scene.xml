@@ -70,7 +70,7 @@
       condim="6"/> -->
     <!-- ===== END Wall ===== -->
 
-    <body name="ground_sphere_body" pos="-0.2 0 0.06">
+    <body name="ground_sphere_body" pos="-0.2 0 0.06" mocap="true">
       <geom name="ground_sphere" 
         type="sphere" 
         size="0.06" 
