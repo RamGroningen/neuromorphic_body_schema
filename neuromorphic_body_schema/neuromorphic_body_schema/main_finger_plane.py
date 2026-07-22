@@ -97,7 +97,11 @@ PROPRIOCEPTION_MODE = "event_driven"  # "event_driven" or "frame_based"
 VISUALIZE_PROPRIOCEPTION_FEED = False
 
 BALL_BODY_NAME = "ground_sphere_body"
-BALL_SPEED = 0.05  # meters per second while a control input is held
+BALL_SPEED = 0.05
+BALL_SPEED_DEFAULT = BALL_SPEED
+BALL_SPEED_MIN = 0.0
+BALL_SPEED_MAX = 0.125
+PATTERN_DISTANCE_DEFAULT = 0.25
 
 
 class BallMotionController:
@@ -124,9 +128,16 @@ class BallMotionController:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._pressed_actions: set[str] = set()
+        self._speed = BALL_SPEED_DEFAULT
+        self._pattern_distance = PATTERN_DISTANCE_DEFAULT
+        self._pattern_axis: str | None = None
+        self._pattern_direction = 1.0
+        self._pattern_center = np.zeros(2, dtype=float)
+        self._reset_requested = False
 
     def press(self, action: str) -> None:
         with self._lock:
+            self._pattern_axis = None
             self._pressed_actions.add(action)
 
     def release(self, action: str) -> None:
@@ -136,9 +147,73 @@ class BallMotionController:
     def stop(self) -> None:
         with self._lock:
             self._pressed_actions.clear()
+            self._pattern_axis = None
 
-    def vector(self) -> np.ndarray:
+    def request_reset(self) -> None:
         with self._lock:
+            self._pressed_actions.clear()
+            self._pattern_axis = None
+            self._reset_requested = True
+
+    def consume_reset_request(self) -> bool:
+        with self._lock:
+            requested = self._reset_requested
+            self._reset_requested = False
+            return requested
+
+    def set_speed(self, speed: float) -> None:
+        clamped_speed = min(max(speed, BALL_SPEED_MIN), BALL_SPEED_MAX)
+        with self._lock:
+            self._speed = clamped_speed
+
+    def speed(self) -> float:
+        with self._lock:
+            return self._speed
+
+    def pattern_speed(self) -> float:
+        return BALL_SPEED
+
+    def set_pattern_distance(self, distance: float) -> None:
+        with self._lock:
+            self._pattern_distance = max(0.0, distance)
+
+    def pattern_distance(self) -> float:
+        with self._lock:
+            return self._pattern_distance
+
+    def set_pattern_center(self, position: np.ndarray) -> None:
+        with self._lock:
+            self._pattern_center = np.asarray(position, dtype=float).copy()
+
+    def start_pattern(self, axis: str) -> None:
+        with self._lock:
+            self._pressed_actions.clear()
+            self._pattern_axis = axis
+            self._pattern_direction = 1.0
+
+    def stop_pattern(self) -> None:
+        with self._lock:
+            self._pattern_axis = None
+
+    def step(self, dt: float, position: np.ndarray) -> np.ndarray:
+        with self._lock:
+            if self._pattern_axis is not None:
+                direction = np.array([self._pattern_direction, 0.0], dtype=float)
+                axis_index = 0
+                if self._pattern_axis == "y":
+                    direction = np.array([0.0, self._pattern_direction], dtype=float)
+                    axis_index = 1
+
+                displacement = position[axis_index] - self._pattern_center[axis_index]
+                if displacement >= self._pattern_distance:
+                    self._pattern_direction = -1.0
+                    direction *= -1.0
+                elif displacement <= -self._pattern_distance:
+                    self._pattern_direction *= -1.0
+                    direction *= -1.0
+
+                return direction
+
             if not self._pressed_actions:
                 return np.zeros(2, dtype=float)
 
@@ -178,22 +253,99 @@ class BallControlPanel:
             wraplength=280,
         ).grid(row=0, column=0, columnspan=3, pady=(0, 10), sticky="w")
 
-        self._make_button(container, "Forward", "forward", 1, 1)
-        self._make_button(container, "Left", "left", 2, 0)
-        self._make_button(container, "Stop", None, 2, 1, stop_button=True)
-        self._make_button(container, "Right", "right", 2, 2)
-        self._make_button(container, "Back", "back", 3, 1)
+        tk.Label(container, text="Speed").grid(row=1, column=0, sticky="w")
+        self._speed_var = tk.DoubleVar(value=BALL_SPEED_DEFAULT)
+        self._speed_label = tk.Label(container, text=f"{BALL_SPEED_DEFAULT:.3f} m/s")
+        self._speed_label.grid(row=1, column=2, sticky="e")
+        self._speed_scale = tk.Scale(
+            container,
+            from_=BALL_SPEED_MIN,
+            to=BALL_SPEED_MAX,
+            resolution=0.005,
+            orient=tk.HORIZONTAL,
+            length=170,
+            variable=self._speed_var,
+            command=self._on_speed_change,
+        )
+        self._speed_scale.grid(row=1, column=1, sticky="ew", padx=4)
+
+        tk.Label(container, text="Pattern Distance").grid(row=2, column=0, sticky="w")
+        self._pattern_distance_var = tk.DoubleVar(value=PATTERN_DISTANCE_DEFAULT)
+        self._pattern_distance_entry = tk.Entry(
+            container,
+            textvariable=self._pattern_distance_var,
+            width=10,
+        )
+        self._pattern_distance_entry.grid(row=2, column=1, sticky="w", padx=4)
+        tk.Button(
+            container,
+            text="Apply",
+            command=self._apply_pattern_distance,
+            width=8,
+        ).grid(row=2, column=2, sticky="e", padx=4)
+
+        self._make_button(container, "Forward", "forward", 3, 1)
+        self._make_button(container, "Left", "left", 4, 0)
+        self._make_button(container, "Stop", None, 4, 1, stop_button=True)
+        self._make_button(container, "Right", "right", 4, 2)
+        self._make_button(container, "Back", "back", 5, 1)
+
+        tk.Label(
+            container,
+            text="Patterns",
+            font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=6, column=0, columnspan=3, pady=(10, 4), sticky="w")
+        tk.Button(
+            container,
+            text="Forward <-> Back",
+            command=lambda: self.controller.start_pattern("y"),
+            width=16,
+        ).grid(row=7, column=0, columnspan=2, padx=4, pady=4, sticky="ew")
+        tk.Button(
+            container,
+            text="Left <-> Right",
+            command=lambda: self.controller.start_pattern("x"),
+            width=16,
+        ).grid(row=7, column=2, padx=4, pady=4, sticky="ew")
+        tk.Button(
+            container,
+            text="Stop Pattern",
+            command=self.controller.stop_pattern,
+            width=16,
+        ).grid(row=8, column=0, columnspan=3, padx=4, pady=4, sticky="ew")
+        tk.Button(
+            container,
+            text="Reset Ball",
+            command=self.controller.request_reset,
+            width=16,
+        ).grid(row=9, column=0, columnspan=3, padx=4, pady=4, sticky="ew")
 
         tk.Label(
             container,
             text="Tip: keep this window focused for keyboard input.",
             fg="#555555",
-        ).grid(row=4, column=0, columnspan=3, pady=(10, 0), sticky="w")
+        ).grid(row=10, column=0, columnspan=3, pady=(10, 0), sticky="w")
 
         self._root.bind("<KeyPress>", self._on_key_press)
         self._root.bind("<KeyRelease>", self._on_key_release)
+        self._on_speed_change(f"{BALL_SPEED_DEFAULT}")
+        self._apply_pattern_distance()
         self._root.update_idletasks()
         self._root.focus_force()
+
+    def _on_speed_change(self, value: str) -> None:
+        speed = float(value)
+        self.controller.set_speed(speed)
+        self._speed_label.configure(text=f"{speed:.3f} m/s")
+
+    def _apply_pattern_distance(self) -> None:
+        try:
+            distance = float(self._pattern_distance_var.get())
+        except (tk.TclError, ValueError):
+            distance = PATTERN_DISTANCE_DEFAULT
+            self._pattern_distance_var.set(distance)
+
+        self.controller.set_pattern_distance(distance)
 
     def _make_button(
         self,
@@ -312,6 +464,7 @@ if __name__ == "__main__":
     ball_mocap_id = model.body_mocapid[ball_body_id]
     ball_rest_position = data.mocap_pos[ball_mocap_id].copy()
     ball_controller = BallMotionController()
+    ball_controller.set_pattern_center(ball_rest_position[:2])
     control_panel = BallControlPanel(ball_controller)
 
     joint_dict_prop = {
@@ -353,10 +506,17 @@ if __name__ == "__main__":
             while sim_viewer.is_running():
                 control_panel.pump()
 
-                direction = ball_controller.vector()
+                if ball_controller.consume_reset_request():
+                    data.mocap_pos[ball_mocap_id] = ball_rest_position.copy()
+                    mj_forward(model, data)
+
+                direction = ball_controller.step(
+                    model.opt.timestep,
+                    data.mocap_pos[ball_mocap_id][:2],
+                )
                 if np.any(direction):
                     ball_position = data.mocap_pos[ball_mocap_id]
-                    ball_position[:2] += direction * BALL_SPEED * model.opt.timestep
+                    ball_position[:2] += direction * ball_controller.speed() * model.opt.timestep
                     ball_position[2] = ball_rest_position[2]
                     mj_forward(model, data)
 
